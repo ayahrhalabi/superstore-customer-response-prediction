@@ -1,0 +1,782 @@
+---
+title: "402 final project"
+author: "Jiayi Liang  \nAyah Halabi  \nSetara Nusratty  \nJingwan Wang  \nNingze Xia\n"
+date: "2024-12-03"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(tidyverse)
+library(car)
+library(sjPlot)
+library(nnet)
+library(caret)
+library(ggplot2)
+library(caTools)
+library(randomForest)
+library(ROCR)
+library(lubridate)
+library(effects)
+library(e1071)
+library(gbm)
+```
+
+```{r}
+df <- read.csv("~/Desktop/STAT 402/Data/superstore_data.csv")
+
+head(df)
+
+sum(is.na(df))
+
+df <- na.omit(df)
+```
+Only 24 NA values going to remove
+
+##EDA
+```{r}
+#recoding categorical variables
+df$Response <- as.factor(df$Response)
+
+df$Kidhome <- dplyr::recode(df$Kidhome,
+                                          "0" = "no", 
+                                          "1" = "yes",
+                                          "2" = "yes")
+df$Kidhome <- as.factor(df$Kidhome)
+
+df$Teenhome <- dplyr::recode(df$Teenhome,
+                                          "0" = "no", 
+                                          "1" = "yes",
+                                          "2" = "yes")
+df$Teenhome <- as.factor(df$Teenhome)
+
+df$Marital_Status <- dplyr::recode(df$Marital_Status,
+                                          "Absurd" = "Single", 
+                                          "Alone" = "Single",
+                                          "YOLO" = "Single",
+                                          "Widow" = "Single",
+                                          "Divorced" = "Single",
+                                          "Married" = "Together")
+df$Marital_Status <- factor(df$Marital_Status, levels = c("Single", "Together"))
+
+df$Education <- dplyr::recode(df$Education,
+                                          "2n Cycle" = "Higher Ed", 
+                                          "Basic" = "Bachelors",
+                                          "Master" = "Higher Ed",
+                                          "PhD" = "Higher Ed",
+                                          "Graduation" = "Bachelors")
+df$Education <- factor(df$Education, levels = c("Bachelors", "Higher Ed"))
+
+table(df$Marital_Status)
+table(df$Kidhome)
+table(df$Teenhome)
+table(df$Complain)
+table(df$Education)
+```
+Complain is very unevenly leveled will not include this. 
+
+```{r}
+# histograms of numerical variables
+
+numeric_non_factor_columns <- sapply(df, function(x) is.numeric(x) & !is.factor(x)) 
+filtered_columns <- setdiff(names(df)[numeric_non_factor_columns], "Complain")      
+
+for (col_name in filtered_columns) {
+  hist(df[[col_name]], 
+       main = paste("Histogram of", col_name), 
+       xlab = col_name, 
+       col = "lightblue", 
+       border = "black")
+}
+
+
+```
+Most of these look skewed. Looking at Income, there are a few outliers that skew the data heavily that we can remove. We also combined the amount spent for all of these into 1 column instead of 6 separate ones. ID is also not relevant we do not need. Need to bin Recency since it is uniform. Also want to change birth year to age, since we cannot glean much from birth year. Also want to remove outliers for NumCatalog Purchases and NumWebVisitsMonth and NumDealsPurchases. We can see there is only a few that are not reflective of the rest of the data and are heavily skewing the histogram.
+
+```{r}
+#creating age column
+df <- df %>% 
+  mutate(Age = ceiling(2014 - Year_Birth)) %>%
+  filter(Age < 114) #remove outliers
+
+hist(df$Age)
+
+```
+Looks normal
+
+```{r}
+#binning NumDealsPurchases
+#even after doing log and removing outliers the data was still skewed
+#going to turn categorical instead
+
+summary(df$NumDealsPurchases) #mean and median are almost equal can split in half
+
+median_value <- median(df$NumDealsPurchases, na.rm = TRUE)
+
+# Create a new categorical variable
+df <- df %>%
+  mutate(NumDealsPurchases = ifelse(NumDealsPurchases > median_value, "High", "Low"))
+
+df$NumDealsPurchases <- factor(df$NumDealsPurchases, levels = c("Low", "High"))
+
+table(df$NumDealsPurchases)
+
+```
+looks ok
+
+```{r}
+#removing outliers from NumCatalogPurchases and logged
+#was still skewed going to make it categorical instead
+
+summary(df$NumCatalogPurchases) #split in half median and mean almost the same
+
+#make categorical
+median_value <- median(df$NumCatalogPurchases, na.rm = TRUE)
+
+# Create a new categorical variable
+df <- df %>%
+  mutate(NumCatalogPurchases = ifelse(NumCatalogPurchases > median_value, "High", "Low"))
+
+df$NumCatalogPurchases <- factor(df$NumCatalogPurchases, levels = c("Low", "High"))
+
+table(df$NumCatalogPurchases)
+
+```
+looks ok
+
+```{r}
+#binning NumWebPurchases
+#even after doing log and removing outliers the data was still skewed
+#make categorical
+
+summary(df$NumWebPurchases) #mean and median are almost equal can split in half
+
+median_value <- median(df$NumWebPurchases, na.rm = TRUE)
+
+# Create a new categorical variable
+df <- df %>%
+  mutate(NumWebPurchases = ifelse(NumWebPurchases > median_value, "High", "Low"))
+
+df$NumWebPurchases <- factor(df$NumWebPurchases, levels = c("Low", "High"))
+
+table(df$NumWebPurchases)
+```
+looks ok
+
+```{r}
+#removing outliers from NumWebVisitsMonth
+#even after doing log and removing outliers the data was still skewed
+#make categorical
+
+summary(df$NumWebVisitsMonth) #mean and median are almost equal can split in half
+
+median_value <- median(df$NumWebVisitsMonth, na.rm = TRUE)
+
+# Create a new categorical variable
+df <- df %>%
+  mutate(NumWebVisitsMonth = ifelse(NumWebVisitsMonth > median_value, "High", "Low"))
+
+df$NumWebVisitsMonth <- factor(df$NumWebVisitsMonth, levels = c("Low", "High"))
+
+table(df$NumWebVisitsMonth)
+
+```
+looks ok
+
+```{r}
+#NumStorePurchases
+#outliers are not severe enough to remove and log did not help with normalization
+#will bin instead
+
+summary(df$NumStorePurchases) #mean and median are almost equal can split in half
+
+median_value <- median(df$NumStorePurchases, na.rm = TRUE)
+
+# Create a new categorical variable
+df <- df %>%
+  mutate(NumStorePurchases = ifelse(NumStorePurchases > median_value, "High", "Low"))
+
+df$NumStorePurchases <- factor(df$NumStorePurchases, levels = c("Low", "High"))
+
+table(df$NumStorePurchases)
+```
+Table looks ok
+
+```{r}
+#removing outliers from Income
+# Calculate IQR
+Q1 <- quantile(df$Income, 0.25, na.rm = TRUE)  # First quartile
+Q3 <- quantile(df$Income, 0.75, na.rm = TRUE)  # Third quartile
+IQR <- Q3 - Q1  # Interquartile range
+
+# Define outlier thresholds
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Identify outliers
+outliers <- df %>% 
+  filter(Income < lower_bound | Income > upper_bound)
+
+df <- df %>%
+  filter(!(Income %in% outliers$Income)) 
+
+hist(df$Income)
+
+```
+There were a few extreme values in Income that do not fit the data. Removing these leads to Income looking normal
+
+```{r}
+#combining amount spent
+df <- df%>%
+  mutate(Total_Spent = MntFishProducts + MntMeatProducts + MntFruits + MntSweetProducts + MntWines + MntGoldProds)
+
+hist(df$Total_Spent) # still skewed, will remove outliers
+
+#removing outliers and logged it but its still skewed will bin instead
+
+summary(df$Total_Spent)
+
+df <- df %>% 
+  mutate(Total_Spent = case_when(
+  Total_Spent <= 397 ~ "below median",
+  TRUE ~ "above median"
+))
+
+table(df$Total_Spent)
+
+```
+table looks good
+
+```{r}
+#binning recency to make it categorical
+recency_median <- median(df$Recency, na.rm = TRUE)
+
+# Create a new variable with descriptive labels
+df <- df %>%
+  mutate(Order_Recency = ifelse(Recency <= recency_median, "Recent", "Not Recent"))
+
+table(df$Order_Recency)
+```
+table looks good
+
+```{r}
+#altering date into useable column
+
+#converting to date
+df$Dt_Customer <- trimws(df$Dt_Customer)
+df$Dt_Customer <- as.Date(df$Dt_Customer, format = "%m/%d/%Y")
+
+most_recent_date <- max(df$Dt_Customer, na.rm = TRUE)
+
+df$customer_tenure_months <- as.numeric(interval(df$Dt_Customer, most_recent_date) %/% months(1))
+
+hist(df$customer_tenure_months)
+
+```
+histogram looks normal
+
+#Removing unnecessary variables
+
+```{r}
+df <- df %>%
+  select(-"MntWines", -"MntMeatProducts", -"MntGoldProds", -"MntFishProducts", - "MntSweetProducts", -"MntFruits", -"Recency", -"Dt_Customer", -"Year_Birth", -"Complain", -"Id")
+```
+
+
+#bar graphs
+
+```{r}
+cat_col_store <- df %>% select(where(is.character), where(is.factor), Response)
+
+for (i in names(cat_col_store)[names(cat_col_store) != "Response"]) {
+  # Calculate percentages for each bar
+  plot_data <- cat_col_store %>%
+    group_by(.data[[i]], Response) %>%
+    summarise(Count = n(), .groups = "drop") %>%
+    group_by(.data[[i]]) %>%
+    mutate(Percentage = Count / sum(Count) * 100)
+  
+  # Create the plot
+  p <- ggplot(plot_data, aes(x = .data[[i]], y = Percentage, fill = as.factor(Response))) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+              position = position_stack(vjust = 0.5), size = 3, color = "white") +
+    scale_y_continuous(labels = scales::percent_format(scale = 1)) +  # Format y-axis as percentages
+    scale_fill_manual(values = c("#6baed6", "#3182bd")) +  # Two shades of blue
+    labs(
+      title = paste("Stacked Bar Chart with Percentages for", i),
+      x = i,
+      y = "Percentage of Response",
+      fill = "Response"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top"
+    )
+  
+  # Print the plot
+  print(p)
+}
+```
+
+#adding boxplots
+```{r}
+df_numerical <- df %>% select(where(is.numeric), Response)
+
+# Loop through numerical variables except "Response"
+for (var in names(df_numerical)[names(df_numerical) != "Response"]) {
+  # Calculate medians for each group
+  medians <- df_numerical %>%
+    group_by(Response = as.factor(Response)) %>%
+    summarise(Median = median(.data[[var]], na.rm = TRUE), .groups = 'drop')
+  
+  # Create the box plot
+  p <- ggplot(df_numerical, aes(x = as.factor(Response), y = .data[[var]], fill = as.factor(Response))) +
+    geom_boxplot() +
+    geom_text(data = medians, aes(x = Response, y = Median + 0.05 * diff(range(df_numerical[[var]])), 
+                                  label = round(Median, 2)), 
+              size = 4, color = "black") +
+    labs(
+      title = paste("Box Plot of", var, "by Response"),
+      x = "Response",
+      y = var,
+      fill = "Response"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  # Print the plot
+  print(p)
+}
+
+
+```
+
+#correlation matrix
+```{r}
+
+library(corrplot)
+
+df_num <- select_if(df, is.numeric)
+
+cormat <- round(cor(df_num),2)
+head(cormat)
+
+corrplot(
+  cormat, 
+  method = "color", 
+  col = colorRampPalette(c("#2C7BB6", "white", "#D7191C"))(300), 
+  tl.col = "gray20",          
+  tl.srt = 45,                 # Angle of the text for readability
+  addCoef.col = "gray10",      # Color of correlation coefficient labels
+  number.cex = 0.7,            # Size of correlation coefficient numbers
+  cl.pos = "b",                # Position of color legend at the bottom
+  cl.cex = 0.8,                # Size of color legend text
+  main = "Correlation Matrix", # Simplified title for a clean look
+  mar = c(0, 0, 2, 0),         # Adjust margins for a balanced layout
+  diag = FALSE,                # Removes the diagonal for clearer view
+  outline = TRUE,              # Adds a border around each tile for distinction
+  tl.cex = 0.8,                # Font size of the label text
+  addgrid.col = NA             # Removes grid lines for a smooth appearance
+)
+
+```
+no high correlation between any potential numerical predictors
+
+#Random Forest for feature selection
+```{r}
+set.seed(71)
+rf <-randomForest(Response~.,data=df, importance = TRUE) 
+rf
+
+importance(rf)
+
+varImpPlot(rf)
+
+#sorting by decreasing order of Mean Decrease Accuracy 
+importance_values <- importance(rf) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Variable")
+sorted_importance <- importance_values %>%
+  arrange(desc(MeanDecreaseAccuracy))
+print(sorted_importance)
+
+
+```
+#initial model with an interaction effect
+```{r}
+m0 <- glm(Response ~ Income + Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumStorePurchases + NumWebVisitsMonth + NumWebPurchases + Marital_Status*NumWebPurchases, data = df, family = "binomial")
+
+summary(m0)
+```
+we see that the interaction is not significant try one without it
+
+```{r}
+#interaction plot for m0
+interaction_effect <- effect("Marital_Status*NumWebPurchases", m0)
+
+plot(interaction_effect, main = "Interaction Effect: Marital Status vs NumWebPurchases",
+     xlab = "Marital Status", ylab = "Response")
+
+```
+
+
+```{r}
+m1 <- glm(Response ~ Income + Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumStorePurchases + NumWebVisitsMonth + NumWebPurchases, data = df, family = "binomial")
+
+summary(m1)
+```
+All these variables look significant
+
+```{r}
+#exponentiating model
+round(exp(cbind(Estimate=coef(m1), confint(m1))),4)
+plot_model(m1)
+```
+the Confidence interval for the odds ratio of Income includes 1 so we can remove it from our model
+
+```{r}
+#checking for multicollinearity
+vif(m1)
+```
+all the values are under 5 its ok, but the Confidence interval for the odds ratio of Income includes 1 so we can remove it from our model
+
+#trying without income
+
+```{r}
+m2 <- glm(Response ~ Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumStorePurchases + NumWebVisitsMonth + NumWebPurchases, data = df, family = "binomial")
+
+summary(m2)
+```
+After removing Income, NumWebVisits and NumWebPurchases become insigificant can remove these
+
+```{r}
+m3 <- glm(Response ~ Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumWebPurchases, data = df, family = "binomial")
+
+summary(m3)
+```
+All variables are significant
+
+```{r}
+#exponentiating model
+round(exp(cbind(Estimate=coef(m3), confint(m3))),4)
+plot_model(m3)
+
+vif(m3)
+```
+This all looks ok now lets try with interaction
+
+#With Interaction
+```{r}
+m4 <-  glm(Response ~ Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumWebPurchases + customer_tenure_months*Order_Recency, data = df, family = "binomial")
+
+summary(m4)
+
+```
+#Indicates significant interaction
+
+#odds plot
+```{r}
+round(exp(cbind(Estimate=coef(m4), confint(m4))),4)
+plot_model(m4)
+```
+It seems a bit off that Order_Recency has an odds ratio of 10 after including the interaction
+
+#interaction plot
+```{r}
+
+interaction_effect <- effect("customer_tenure_months:Order_Recency", m4)
+
+plot(interaction_effect, main = "Interaction Effect: Customer Tenure vs Order Recency",
+     xlab = "Customer Tenure (Months)", ylab = "Response")
+
+```
+Lines are not parallel
+
+
+```{r}
+#comparing the two
+anova(m3, m4, test = "Chisq")
+pchisq(11.538, 1)
+
+#just model wih interaction
+anova(m4, test = "Chisq")
+```
+when running the anova we see that the interaction effect is significant
+
+#residuals plot
+```{r}
+residualPlots(m3)
+residualPlots(m4)
+```
+#Creating confusion matrix and roc curve for each model
+
+```{r}
+#roc curve for m3 model with no interaction
+predicted_probabilities <- predict(m3, type = "response")
+
+pred_log <- prediction(predicted_probabilities, df$Response)
+
+roc_curve <- performance(pred_log, "tpr", "fpr")
+
+plot(roc_curve, colorize = TRUE, main = "ROC Curve for Model M3 No Interaction")
+abline(a = 0, b = 1, col = "red", lty = 2)
+
+```
+```{r}
+#another ROC curve for m3 this is to help us determine our cut off for the confusion matrix
+split<-sample.split(df$Response,SplitRatio=0.65)
+train <- df[split, ]  
+test <- df[!split, ]
+
+m5<-glm(Response ~ Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumWebPurchases, data = df, family = "binomial")
+
+result_m5<-predict(m5,newdata=test,type="response")
+
+pred_m5<-prediction(result_m5,test$Response)
+acc<-performance(pred_m5,"acc")
+plot(acc)
+
+
+```
+based off our ROC curve anywhere between 0.4-0.6 seems like a good cutoff
+
+```{r}
+#confusion matrix for m3 model with no interaction
+table(test$Response,result_m5>0.20)
+
+#accuracy
+paste("accuracy is:", (512+74)/(512+74+143+43))
+
+# true positive rate sensitivity
+paste("true pos rate - sensitivity is:", 74/(43+74))
+
+#false positive rate - sensitivity
+paste("false pos rate - sensitivity is:", 143/(512+143))
+
+#specificity
+paste("specificity is:", 512/(512+143))
+```
+#doing the same for m4 model with interaction
+```{r}
+#roc curve for m4 model with interaction
+predicted_probabilities <- predict(m4, type = "response")
+
+pred_log <- prediction(predicted_probabilities, df$Response)
+
+roc_curve <- performance(pred_log, "tpr", "fpr")
+
+plot(roc_curve, colorize = TRUE, main = "ROC Curve for Model 4 w/ Interaction")
+abline(a = 0, b = 1, col = "red", lty = 2)
+```
+
+```{r}
+#another ROC curve for m4 this is to help us determine our cut off for the confusion matrix
+split<-sample.split(df$Response,SplitRatio=0.65)
+train <- df[split, ]  
+test <- df[!split, ]
+
+m6<-glm(Response ~ Teenhome + customer_tenure_months + Marital_Status + Order_Recency + NumWebPurchases + customer_tenure_months*Order_Recency, data = df, family = "binomial")
+
+result_m6<-predict(m6,newdata=test,type="response")
+
+pred_m6<-prediction(result_m6,test$Response)
+acc<-performance(pred_m6,"acc")
+plot(acc)
+
+```
+
+```{r}
+#conufusion matrix for m4 model with interaction
+table(test$Response,result_m6>0.2)
+
+#accuracy
+paste("accuracy is:", (532+75)/(532+75+123+42))
+
+# true positive rate sensitivity
+paste("true pos rate - sensitivity is:", 75/(42+75))
+
+#false positive rate - sensitivity
+paste("false pos rate - sensitivity is:", 123/(532+123))
+
+#specificity
+paste("specificity is:", 532/(532+123))
+```
+we see that the model with interaction has slightly better accuracy and sensitivity
+
+#cross validation
+```{r}
+#renaming for cross validation:
+df$Response <- factor(df$Response, levels = c(0, 1), labels = c("No", "Yes"))
+
+# Define the logistic regression models
+model_formula_m4 <- Response ~ Teenhome + customer_tenure_months + Marital_Status + 
+                     Order_Recency + NumWebPurchases + customer_tenure_months *       Order_Recency
+model_formula_m3 <- Response ~ Teenhome + customer_tenure_months + Marital_Status + 
+                     Order_Recency + NumWebPurchases
+
+# Create control specifications for cross-validation
+set.seed(123)  # For reproducibility
+cv_control <- trainControl(method = "cv",  # Cross-validation
+                           number = 10,   # Number of folds
+                           classProbs = TRUE,  # For probability outputs
+                           summaryFunction = twoClassSummary)  # Performance metrics
+
+# Train the m4 model using cross-validation
+cv_m4 <- train(model_formula_m4, 
+               data = df, 
+               method = "glm", 
+               family = "binomial", 
+               trControl = cv_control,
+               metric = "ROC")  # Use ROC as the metric
+
+# Train the m3 model using cross-validation
+cv_m3 <- train(model_formula_m3, 
+               data = df, 
+               method = "glm", 
+               family = "binomial", 
+               trControl = cv_control,
+               metric = "ROC")  # Use ROC as the metric
+
+# Compare performance
+print(cv_m4)
+print(cv_m3)
+
+# Summarize performance metrics
+summary(cv_m4)
+summary(cv_m3)
+
+
+```
+Metric	     Model 1 (With Interaction)	      Model 2 (Without Interaction)
+ROC (AUC)	             0.7777	                 0.7747
+Sensitivity	           0.9861	                 0.9856
+Specificity	           0.1295	                 0.1143
+AIC	                   1571.8	                 1581.3
+
+Both are about the same could use simpler model
+
+
+#Sophies method from section for cross validation this is for m3 no interaction
+```{r}
+set.seed(1985)
+
+index <- createDataPartition(df$Response, p=.8, list=FALSE, times=1)
+
+# Create test and train data frames
+train_df <- df[index,]
+test_df <- df[-index,]
+
+mean(train_df$Response == "Yes")
+mean(test_df$Response == "Yes")
+
+nrow(train_df) ## selects 80% of data for train set
+
+
+# Specify type of training method used and the number of folds
+## number=5 folds
+ctrlspecs <- trainControl(method="cv", number=5, classProbs=TRUE)
+
+# Specify logistic regression model to be estimated using training data
+# and k-fold cross-validation process
+model1 <- train(Response ~ Teenhome + customer_tenure_months + Marital_Status + 
+                     Order_Recency + NumWebPurchases, data=train_df,
+                method="glm", 
+                family=binomial, 
+                trControl=ctrlspecs)
+
+# Print information about model
+print(model1)
+
+
+# Print results of final model estimated using training data
+summary(model1)
+
+
+# Predict probabilities using the model on test data
+prob_predictions <- predict(model1, newdata = test_df, type = "prob")[, "Yes"]
+
+# Apply the new cutoff (0.17)
+cutoff <- 0.17
+predicted_classes <- ifelse(prob_predictions >= cutoff, "Yes", "No")
+
+# Create confusion matrix to assess model performance
+confusionMatrix(data = factor(predicted_classes, levels = c("No", "Yes")), 
+                reference = test_df$Response)
+
+# ROC Curve
+pred_m1 <- prediction(prob_predictions, test_df$Response)
+roc_curve <- performance(pred_m1, "tpr", "fpr")
+plot(roc_curve, colorize = FALSE, col = "blue")
+abline(0, 1)
+```
+
+#sophies method for m4
+```{r}
+set.seed(1986)
+
+index <- createDataPartition(df$Response, p=.8, list=FALSE, times=1)
+
+# Create test and train data frames
+train_df <- df[index,]
+test_df <- df[-index,]
+
+mean(train_df$Response == "Yes")
+mean(test_df$Response == "Yes")
+
+nrow(train_df) ## selects 80% of data for train set
+
+
+# Specify type of training method used and the number of folds
+## number=5 folds
+ctrlspecs <- trainControl(method="cv", number=5, classProbs=TRUE)
+
+# Specify logistic regression model to be estimated using training data
+# and k-fold cross-validation process
+model1 <- train(Response ~ Teenhome + customer_tenure_months + Marital_Status + 
+                     Order_Recency + NumWebPurchases + customer_tenure_months *       Order_Recency, data=train_df,
+                method="glm", 
+                family=binomial, 
+                trControl=ctrlspecs)
+
+# Print information about model
+print(model1)
+
+
+# Print results of final model estimated using training data
+summary(model1)
+
+
+# Predict probabilities using the model on test data
+prob_predictions <- predict(model1, newdata = test_df, type = "prob")[, "Yes"]
+
+# Apply the new cutoff (0.17)
+cutoff <- 0.17
+predicted_classes <- ifelse(prob_predictions >= cutoff, "Yes", "No")
+
+# Create confusion matrix to assess model performance
+confusionMatrix(data = factor(predicted_classes, levels = c("No", "Yes")), 
+                reference = test_df$Response)
+
+# ROC Curve
+pred_m1 <- prediction(prob_predictions, test_df$Response)
+roc_curve <- performance(pred_m1, "tpr", "fpr")
+plot(roc_curve, colorize = FALSE, col = "blue")
+abline(0, 1)
+```
+#pearsons goodness of fit test for m3 our final model
+```{r}
+print(paste("Pearson's X^2 =",round(sum(residuals(m3,type="pearson")^2),3)))
+qchisq(0.95, 2199)
+2041.804 < 2309.208
+```
+
+
